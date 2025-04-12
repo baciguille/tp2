@@ -5,6 +5,9 @@ from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.metrics import roc_auc_score
 from xgboost import XGBClassifier
 from sklearn.metrics import roc_auc_score
+from sklearn.model_selection import RandomizedSearchCV
+from scipy.stats import uniform, randint
+
 
 pd.set_option('display.max_columns', None)
 pd.set_option('display.width', None)
@@ -23,6 +26,7 @@ def clasificar_plataforma(plat: str) -> str:
     else:
         return 'otro'
 
+print("cargando datos")
 # ----------- CARGA Y PROCESAMIENTO DE TRAINING DATA -----------
 data = pd.read_csv("competition_data.csv")
 data_ids = data["id"]
@@ -44,11 +48,20 @@ data = pd.get_dummies(data, columns=['tipo_dispositivo']) # identifico los tipos
 
 # One-hot encoding para reason_start
 data = pd.get_dummies(data, columns=['reason_start'], prefix='start', drop_first=True)
+# One-hot encoding para conn_country
+data = pd.get_dummies(data, columns=['conn_country'], prefix='pais', drop_first=True)
+
 
 # Separar variable a predecir y las numericas predictoras 
 y = data["TARGET"]
 X = data.drop(columns=["TARGET", "id"])
 X = X.select_dtypes(include=['number', 'bool'])
+
+# Target encoding para artista usando solo data
+#artist_mean_target = data.groupby('master_metadata_album_artist_name')['TARGET'].mean()
+
+# Aplicar encoding a training
+#data['artist_target_encoded'] = data['master_metadata_album_artist_name'].map(artist_mean_target)
 
 X_columns = X.columns # Guardo las columnas para usar en eval
 
@@ -76,6 +89,16 @@ eval_data = pd.get_dummies(eval_data, columns=['tipo_dispositivo'])
 
 # One-hot encoding para reason_start
 eval_data = pd.get_dummies(eval_data, columns=['reason_start'], prefix='start', drop_first=True)
+# One-hot encoding para conn_country
+eval_data = pd.get_dummies(eval_data, columns=['conn_country'], prefix='pais', drop_first=True)
+
+# Aplicar el encoding ya calculado desde data
+#eval_data['artist_target_encoded'] = eval_data['master_metadata_album_artist_name'].map(artist_mean_target)
+
+# Borrar columna original
+#data = data.drop('master_metadata_album_artist_name', axis=1)
+#eval_data = eval_data.drop('master_metadata_album_artist_name', axis=1)
+
 
 eval_data = eval_data.select_dtypes(include=['number', 'bool'])
 
@@ -86,15 +109,22 @@ for col in X_columns:
 eval_data = eval_data[X_columns]  # 👈 ordenás y emparejás columnas
 
 # ----------- ENTRENAMIENTO DEL MODELO -----------
+
 param_grid = {
-    'n_estimators': [100, 150],
-    'max_depth': [3, 6, 10],
-    'learning_rate': [0.01, 0.1],
-    'subsample': [0.8, 1.0],
-    'colsample_bytree': [0.8, 1.0]
+    'n_estimators': [100, 300],           # cantidad de árboles
+    'max_depth': [10, 30],                 # profundidad máxima del árbol
+    'learning_rate': [0.01, 0.05, 0.1],        # tasa de aprendizaje
+    'subsample': [0.6, 0.8, 1.0],              # proporción de datos usados para cada árbol
+    'colsample_bytree': [0.6, 0.8, 1.0],       # proporción de columnas usadas en cada árbol
+    'min_child_weight': [1, 4],             # peso mínimo de los nodos hoja
+    'gamma': [0, 0.1, 0.3],                    # regularización: ganancia mínima para hacer split
+    'reg_alpha': [0, 0.1, 1],                  # regularización L1 (lasso)
+    'reg_lambda': [1, 1.5, 2],                 # regularización L2 (ridge)
+    'scale_pos_weight': [1, 2, 5]              # peso de la clase positiva (útil si hay desbalance)
 }
 
-modelo = XGBClassifier(eval_metric='logloss', random_state=42)
+print("por entrenar")
+modelo = XGBClassifier(eval_metric='auc', random_state=42)
 grid = GridSearchCV(modelo, param_grid, cv=5, scoring='roc_auc', n_jobs=1)
 grid.fit(x_train, y_train)
 
@@ -127,4 +157,6 @@ submission_df = pd.DataFrame({
     "ID": eval_ids.astype(int),
     "TARGET": y_preds_eval
 })
-submission_df.to_csv("xgboost4.csv", sep=",", index=False)
+submission_df.to_csv("xgboost.csv", sep=",", index=False)
+
+print("termine de correr")
